@@ -236,8 +236,8 @@ async function initDevices() {
       const normalized = label.toLowerCase();
       const isVirtual = ['obs', 'virtual', 'manycam', 'xsplit', 'ndi', 'vcam']
         .some(keyword => normalized.includes(keyword));
-      const isScanner = ['gk122', '高拍仪', '得力', 'deli', 'document', 'scanner']
-        .some(keyword => normalized.includes(keyword));
+      const isScanner = /(^|[^a-z0-9])gk[\s_-]*122a?([^a-z0-9]|$)/i.test(label) ||
+        (normalized.includes('得力') && normalized.includes('高拍仪'));
       if (isVirtual) {
         label = "⛔ " + label + " (虚拟摄像头)";
         o.disabled = true;

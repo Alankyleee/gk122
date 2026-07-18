@@ -12,7 +12,7 @@ from flask import Flask, jsonify, request, Response, send_from_directory, send_f
 from flask_cors import CORS
 from pathlib import Path
 from camera_selection import (
-    is_gk122_camera_name,
+    gk122_model_from_name,
     is_virtual_camera_name,
     select_gk122_device,
 )
@@ -45,7 +45,14 @@ device_index = 0
 device_backend = None
 device_name = ""
 device_catalog = []
+device_profiles = {}
 config = None
+camera_diagnostics = {
+    "enumeration": [],
+    "selected": None,
+    "attempts": [],
+    "last_error": None,
+}
 
 scan_state = {
     "mode": "manual",
@@ -80,11 +87,12 @@ def ensure_dirs():
 
 
 def load_config():
-    global config
+    global config, device_profiles
     if CAPTURE_YAML.exists():
         with open(CAPTURE_YAML, "r", encoding="utf-8") as f:
             data = yaml.safe_load(f)
-        config = data.get(DEVICE_NAME, {})
+        device_profiles = data or {}
+        config = device_profiles.get(DEVICE_NAME, {})
     else:
         config = {
             "recommend_resolution": [3264, 2448],
@@ -98,6 +106,12 @@ def load_config():
                 "video_recording": [[2048, 1536], [1920, 1080], [1280, 720]],
             },
         }
+        device_profiles = {DEVICE_NAME: config}
+
+
+def get_device_profile(name):
+    model = gk122_model_from_name(name) or DEVICE_NAME
+    return device_profiles.get(model, config), model
 
 
 def open_camera(index, backend=None):
@@ -137,110 +151,123 @@ def enumerate_device_entries():
 
 
 def probe_device(entry):
+    """只根据 DirectShow FriendlyName 分类，不提前打开摄像头。"""
     name = entry["name"]
     virtual = is_virtual_camera_name(name)
+    model = gk122_model_from_name(name)
     result = dict(entry)
     result.update({
-        "readable": False, "is_virtual": virtual, "is_gk122": False,
-        "max_width": 0, "max_height": 0, "score": -100 if virtual else 0,
+        "readable": None,
+        "is_virtual": virtual,
+        "is_gk122": bool(model and not virtual),
+        "model": model,
+        "max_width": 0,
+        "max_height": 0,
+        "score": (-1000 if virtual else 0) + (200 if model else 0),
     })
-
-    cap = open_camera(entry["index"], entry.get("backend"))
-    try:
-        if not cap.isOpened():
-            return result
-
-        # 虚拟摄像头不参与高拍仪能力探测，避免 OBS 接受任意分辨率后被误判。
-        resolutions = [(1280, 720)] if virtual else [
-            (4608, 3456), (4328, 3246), (4032, 3024), (3668, 2751),
-            (3264, 2448), (2592, 1944), (2048, 1536), (1920, 1080), (1280, 720),
-        ]
-        cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
-        max_w = max_h = 0
-        for width, height in resolutions:
-            cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
-            cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
-            ret, frame = cap.read()
-            if ret and frame is not None:
-                actual_h, actual_w = frame.shape[:2]
-                result["readable"] = True
-                if actual_w * actual_h > max_w * max_h:
-                    max_w, max_h = actual_w, actual_h
-                if actual_w >= 3264 and actual_h >= 2448:
-                    break
-
-        result["max_width"] = max_w
-        result["max_height"] = max_h
-        named_gk122 = is_gk122_camera_name(name)
-        supports_high_res = max_w >= 3264 and max_h >= 2448
-        result["is_gk122"] = bool(not virtual and result["readable"] and (named_gk122 or supports_high_res))
-        result["score"] = (-100 if virtual else 0) + (100 if named_gk122 else 0) + (40 if supports_high_res else 0)
-        return result
-    finally:
-        cap.release()
+    return result
 
 
 def list_devices():
-    """枚举设备，使用真实名称排除 OBS 等虚拟摄像头。"""
-    global device_catalog
-    devices = []
+    """按原厂方式枚举 FriendlyName；此阶段不打开任何摄像头。"""
+    global device_catalog, camera_diagnostics
     entries = enumerate_device_entries()
     name_detection_available = any(item["name_detection"] for item in entries)
-    for entry in entries:
-        result = probe_device(entry)
-        # 回退探测会生成 10 个占位索引，只返回实际可读取的设备。
-        if result["readable"]:
-            devices.append(result)
+    devices = [probe_device(entry) for entry in entries]
     devices.sort(key=lambda item: item["score"], reverse=True)
     for item in devices:
         item["name_detection_available"] = name_detection_available
     device_catalog = devices
+    camera_diagnostics["enumeration"] = [dict(item) for item in devices]
     return devices
 
 
-def apply_settings(cap, settings=None):
+def decode_fourcc(value):
+    try:
+        encoded = int(value)
+    except (TypeError, ValueError, OverflowError):
+        return ""
+    return "".join(chr((encoded >> (8 * i)) & 0xFF) for i in range(4)).rstrip("\x00")
+
+
+def safe_int(value):
+    try:
+        return int(value)
+    except (TypeError, ValueError, OverflowError):
+        return 0
+
+
+def capture_snapshot(cap):
+    if not cap:
+        return {"opened": False}
+    snapshot = {
+        "opened": bool(cap.isOpened()),
+        "width": safe_int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)),
+        "height": safe_int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)),
+        "fourcc": decode_fourcc(cap.get(cv2.CAP_PROP_FOURCC)),
+    }
+    try:
+        snapshot["backend_name"] = cap.getBackendName()
+    except (AttributeError, cv2.error):
+        snapshot["backend_name"] = None
+    return snapshot
+
+
+def apply_settings(cap, settings=None, profile=None):
+    """复刻原厂写入顺序：宽、高、自动曝光、MJPG，再写图像参数。"""
     if not cap or not cap.isOpened():
         return False
     s = settings or {}
-    width = s.get("width", config["recommend_resolution"][0])
-    height = s.get("height", config["recommend_resolution"][1])
-    fourcc_str = s.get("fourcc", config.get("recommend_fourcc", "MJPG"))
-    brightness = s.get("brightness", config.get("recommend_light", 0))
-    contrast = s.get("contrast", config.get("recommend_contrast", 32))
-    sharpness = s.get("sharpness", config.get("recommend_sharpen", 2))
-    saturation = s.get("saturation", 64)
+    device_profile = profile or config
+    width = s.get("width", device_profile["recommend_resolution"][0])
+    height = s.get("height", device_profile["recommend_resolution"][1])
+    fourcc_str = s.get("fourcc", device_profile.get("recommend_fourcc", "MJPG"))
+    brightness = s.get("brightness", device_profile.get("recommend_light", 0))
+    contrast = s.get("contrast", device_profile.get("recommend_contrast", 32))
+    sharpness = s.get("sharpness", device_profile.get("recommend_sharpen", 2))
     fourcc = cv2.VideoWriter_fourcc(*fourcc_str)
-    cap.set(cv2.CAP_PROP_FOURCC, fourcc)
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
+    cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, 1)
+    cap.set(cv2.CAP_PROP_FOURCC, fourcc)
     cap.set(cv2.CAP_PROP_BRIGHTNESS, brightness)
     cap.set(cv2.CAP_PROP_CONTRAST, contrast)
     cap.set(cv2.CAP_PROP_SHARPNESS, sharpness)
-    cap.set(cv2.CAP_PROP_SATURATION, saturation)
-    cap.set(cv2.CAP_PROP_AUTOFOCUS, 0)
     return True
 
 
-def read_first_frame(cap, requested_width, requested_height):
+def read_first_frame(cap, requested_width, requested_height, profile=None):
     """协商可用分辨率并读取首帧，避免驱动不接受单一分辨率时黑屏。"""
-    configured = config.get("resolution", {}).get("doc_scan", [])
+    global camera_diagnostics
+    device_profile = profile or config
+    configured = device_profile.get("resolution", {}).get("doc_scan", [])
     candidates = [(requested_width, requested_height)]
     candidates.extend((int(width), int(height)) for width, height in configured)
     candidates.extend([
-        tuple(config["recommend_resolution"]), tuple(config["backup_resolution"]), (1920, 1080), (1280, 720),
+        tuple(device_profile["recommend_resolution"]),
+        tuple(device_profile["backup_resolution"]),
+        (1920, 1080),
+        (1280, 720),
     ])
 
+    camera_diagnostics["attempts"] = []
     seen = set()
     for width, height in candidates:
         if (width, height) in seen:
             continue
         seen.add((width, height))
-        apply_settings(cap, {"width": width, "height": height})
-        # 部分 UVC 驱动在切换分辨率后第一帧为空，允许少量预热帧。
-        for _ in range(3):
+        apply_settings(cap, {"width": width, "height": height}, device_profile)
+        attempt = {"requested": [width, height], "negotiated": capture_snapshot(cap), "reads": 0}
+        camera_diagnostics["attempts"].append(attempt)
+        # 16MP UVC 在 DirectShow 切换格式后可能需要数帧才开始输出。
+        for _ in range(10):
+            attempt["reads"] += 1
             ret, frame = cap.read()
             if ret and frame is not None and frame.size:
+                attempt["frame"] = [int(frame.shape[1]), int(frame.shape[0])]
                 return frame
+            time.sleep(0.05)
+        attempt["error"] = "no_frame"
     return None
 
 
@@ -260,6 +287,11 @@ def capture_loop():
                 break
             time.sleep(0.05)
             continue
+        if frame is None or not frame.size:
+            time.sleep(0.05)
+            continue
+        error_count = 0
+        last_error_time = time.time()
         current_frame = frame
         frame_count += 1
         ret_jpg, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
@@ -368,6 +400,7 @@ def api_config():
 def api_start():
     global video_capture, is_running, capture_thread, device_index, device_backend, device_name
     global current_frame, current_frame_jpeg, frame_count
+    global camera_diagnostics
     data = request.json or {}
     width = int(data.get("width", config["recommend_resolution"][0]))
     height = int(data.get("height", config["recommend_resolution"][1]))
@@ -387,7 +420,7 @@ def api_start():
         if not selected:
             return jsonify({
                 "success": False,
-                "message": "未找到可读取的 GK122。请安装设备驱动，并确认未被其他程序占用。",
+                "message": "DirectShow 设备列表中未找到 GK122/GK122a，请安装原厂驱动并重新插拔 USB。",
             }), 404
     else:
         requested_index = int(data.get("index", 0))
@@ -405,6 +438,14 @@ def api_start():
     device_index = int(selected["index"])
     device_backend = selected.get("backend")
     device_name = selected["name"]
+    selected_profile, selected_model = get_device_profile(device_name)
+    camera_diagnostics["selected"] = {
+        "index": device_index,
+        "backend": device_backend,
+        "name": device_name,
+        "model": selected_model,
+    }
+    camera_diagnostics["last_error"] = None
 
     # 彻底停掉旧读取线程，防止切换设备时线程继续读取已释放的句柄。
     is_running = False
@@ -419,17 +460,25 @@ def api_start():
         frame_count = 0
         video_capture = open_camera(device_index, device_backend)
         if not video_capture.isOpened():
+            camera_diagnostics["last_error"] = "open_failed"
             video_capture.release()
             video_capture = None
-            return jsonify({"success": False, "message": f"无法打开摄像头: {device_name}"}), 400
+            return jsonify({
+                "success": False,
+                "message": f"无法打开摄像头: {device_name}",
+                "diagnostics": camera_diagnostics,
+            }), 400
+        camera_diagnostics["opened"] = capture_snapshot(video_capture)
         # VideoCapture.isOpened() 只表示句柄打开；必须拿到真实首帧才算连接成功。
-        first_frame = read_first_frame(video_capture, width, height)
+        first_frame = read_first_frame(video_capture, width, height, selected_profile)
         if first_frame is None:
+            camera_diagnostics["last_error"] = "no_frame"
             video_capture.release()
             video_capture = None
             return jsonify({
                 "success": False,
                 "message": f"{device_name} 已打开但没有视频帧，请关闭占用摄像头的软件后重试。",
+                "diagnostics": camera_diagnostics,
             }), 400
         current_frame = first_frame
         actual_h, actual_w = first_frame.shape[:2]
@@ -446,7 +495,7 @@ def api_start():
         capture_thread.start()
     return jsonify({
         "success": True, "width": actual_w, "height": actual_h,
-        "device": {"index": device_index, "backend": device_backend, "name": device_name},
+        "device": {"index": device_index, "backend": device_backend, "name": device_name, "model": selected_model},
     })
 
 
@@ -481,12 +530,18 @@ def api_status():
     })
 
 
+@app.route("/api/diagnostics")
+def api_diagnostics():
+    return jsonify(camera_diagnostics)
+
+
 @app.route("/api/settings", methods=["POST"])
 def api_settings():
     data = request.json or {}
     with capture_lock:
         if video_capture and video_capture.isOpened():
-            apply_settings(video_capture, data)
+            selected_profile, _ = get_device_profile(device_name)
+            apply_settings(video_capture, data, selected_profile)
             w = int(video_capture.get(cv2.CAP_PROP_FRAME_WIDTH))
             h = int(video_capture.get(cv2.CAP_PROP_FRAME_HEIGHT))
             return jsonify({"success": True, "width": w, "height": h,

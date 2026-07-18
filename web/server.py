@@ -88,20 +88,18 @@ def load_config():
 
 
 def list_devices():
+    """枚举视频设备。使用 MSMF 后端(OpenCV 5.0 推荐),回退 DSHOW。"""
     devices = []
     for i in range(10):
-        cap = cv2.VideoCapture(i, cv2.CAP_DSHOW)
-        if cap.isOpened():
-            name = f"摄像头 {i}"
-            try:
-                cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-                cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
-                ret, _ = cap.read()
-                if ret:
-                    name = f"视频设备 {i}"
-            except Exception:
-                pass
-            devices.append({"index": i, "name": name})
+        cap = cv2.VideoCapture(i, cv2.CAP_MSMF)
+        opened = cap.isOpened()
+        if not opened:
+            cap = cv2.VideoCapture(i, cv2.CAP_DSHOW)
+            opened = cap.isOpened()
+        if opened:
+            ret, _ = cap.read()
+            name = f"视频设备 {i}" if ret else f"摄像头 {i}"
+            devices.append({"index": i, "name": name, "readable": ret})
             cap.release()
     return devices
 
@@ -235,7 +233,8 @@ def index():
 
 @app.route("/api/devices")
 def api_devices():
-    return jsonify({"devices": list_devices()})
+    devices = list_devices()
+    return jsonify({"devices": devices, "count": len(devices)})
 
 
 @app.route("/api/config")
@@ -254,7 +253,9 @@ def api_start():
         if video_capture and video_capture.isOpened():
             video_capture.release()
             video_capture = None
-        video_capture = cv2.VideoCapture(device_index, cv2.CAP_DSHOW)
+        video_capture = cv2.VideoCapture(device_index, cv2.CAP_MSMF)
+        if not video_capture.isOpened():
+            video_capture = cv2.VideoCapture(device_index, cv2.CAP_DSHOW)
         if not video_capture.isOpened():
             return jsonify({"success": False, "message": "无法打开摄像头"}), 400
         apply_settings(video_capture, {"width": width, "height": height})
@@ -526,12 +527,26 @@ def api_scan_preview_file(filename):
     return send_from_directory(str(PREVIEW_DIR), filename)
 
 
-@app.route("/api/scan/file/<path:filepath>")
-def api_scan_get_file(filepath):
-    directory = str(Path(filepath).parent)
-    filename = Path(filepath).name
-    if os.path.exists(filepath):
-        return send_file(filepath, as_attachment=True)
+@app.route("/api/scan/file")
+def api_scan_get_file():
+    """通过 query 参数 ?path=xxx 下载/查看扫描文件(支持 Windows 反斜杠路径)。"""
+    filepath = request.args.get("path", "")
+    if filepath and os.path.exists(filepath):
+        return send_file(filepath, as_attachment=False)
+    return jsonify({"success": False, "message": "文件不存在"}), 404
+
+
+@app.route("/api/scan/papers_file")
+def api_scan_papers_file():
+    """查看证件扫描文件 ?name=xxx 或 ?path=xxx"""
+    name = request.args.get("name", "")
+    path = request.args.get("path", "")
+    if path and os.path.exists(path):
+        return send_file(path, as_attachment=False)
+    if name:
+        full = PAPERS_DIR / name
+        if full.exists():
+            return send_file(str(full), as_attachment=False)
     return jsonify({"success": False, "message": "文件不存在"}), 404
 
 

@@ -258,17 +258,29 @@ async function startCamera() {
       document.getElementById("placeholder").style.display = "none";
       const img = document.getElementById("videoImg");
       img.style.display = "block";
-      img.src = API + "/api/stream?_t=" + Date.now();
       streamActive = true;
+      startFramePulling();
       setStatus(`摄像头已开启 (${r.width}×${r.height})`, "success");
       startPolling();
     }
   } catch(e) { setStatus("开启失败: " + e.message, "error"); }
 }
 
+// 使用定时拉取单帧(兼容性比 MJPEG 流更好)
+let frameTimer = null;
+function startFramePulling() {
+  const img = document.getElementById("videoImg");
+  if (frameTimer) clearInterval(frameTimer);
+  frameTimer = setInterval(() => {
+    if (!streamActive) return;
+    img.src = API + "/api/frame?_t=" + Date.now();
+  }, 100);
+}
+
 async function stopCamera() {
   try { await api("/api/stop"); } catch(e) {}
   streamActive = false;
+  if (frameTimer) { clearInterval(frameTimer); frameTimer = null; }
   document.getElementById("videoImg").style.display = "none";
   document.getElementById("placeholder").style.display = "flex";
   document.getElementById("statusTag").textContent = "状态: 已停止";
@@ -358,7 +370,7 @@ async function scanPapers(side) {
     });
     if (r.success) {
       const el = document.getElementById(side === "front" ? "papersFront" : "papersBack");
-      el.innerHTML = `<img src="/api/scan/preview/${r.filename}" style="width:100%;height:100%;object-fit:cover">`;
+      el.innerHTML = `<img src="/api/scan/papers_file?path=${encodeURIComponent(r.path)}&_t=${Date.now()}" style="width:100%;height:100%;object-fit:cover">`;
       if (side === "front") papersFrontPath = r.path;
       else papersBackPath = r.path;
       setStatus(`${side === "front" ? "正面" : "反面"}扫描成功`, "success");
@@ -432,8 +444,10 @@ async function refreshScanList() {
     r.files.forEach((f, i) => {
       const item = document.createElement("div");
       item.className = "scan-item";
-      item.innerHTML = `<div class="idx">${i+1}</div><div class="del" onclick="deleteScan('${f.path.replace(/\\/g,'\\\\')}')">✕</div><img src="/api/scan/file/${encodeURIComponent(f.path)}" loading="lazy">`;
-      item.onclick = () => window.open("/api/scan/file/" + encodeURIComponent(f.path), "_blank");
+      const safePath = encodeURIComponent(f.path);
+      item.innerHTML = `<div class="idx">${i+1}</div><div class="del" data-path="${f.path}">✕</div><img src="/api/scan/file?path=${safePath}&_t=${Date.now()}" loading="lazy">`;
+      item.querySelector(".del").onclick = (e) => { e.stopPropagation(); deleteScan(f.path); };
+      item.onclick = () => window.open("/api/scan/file?path=" + safePath, "_blank");
       grid.appendChild(item);
     });
   } catch(e) {}

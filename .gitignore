@@ -24,3 +24,9 @@ __pycache__/
 Thumbs.db
 Desktop.ini
 .DS_Store
+
+# 扫描输出
+web/output/
+web/cache/
+scan_api_dump.txt
+scan_xdis.py

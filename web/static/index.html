@@ -285,21 +285,36 @@ async function startCamera() {
   } catch(e) { setStatus("开启失败: " + e.message, "error"); }
 }
 
-// 使用定时拉取单帧(兼容性比 MJPEG 流更好)
-let frameTimer = null;
+// 使用 onload 顺序拉取单帧(避免高分辨率帧被中断)
+let frameLoading = false;
 function startFramePulling() {
   const img = document.getElementById("videoImg");
-  if (frameTimer) clearInterval(frameTimer);
-  frameTimer = setInterval(() => {
-    if (!streamActive) return;
-    img.src = API + "/api/frame?_t=" + Date.now();
-  }, 100);
+  frameLoading = false;
+  img.onerror = function() {
+    frameLoading = false;
+    if (streamActive) setTimeout(pullFrame, 200);
+  };
+  pullFrame();
+}
+function pullFrame() {
+  if (!streamActive) return;
+  const img = document.getElementById("videoImg");
+  img.src = API + "/api/frame?_t=" + Date.now();
+  frameLoading = true;
+  img.onload = function() {
+    frameLoading = false;
+    if (streamActive) {
+      // 自动适配拉取间隔: 高分辨率慢一些,低分辨率快一些
+      var delay = (img.naturalWidth > 3000) ? 200 : 80;
+      setTimeout(pullFrame, delay);
+    }
+  };
 }
 
 async function stopCamera() {
   try { await api("/api/stop"); } catch(e) {}
   streamActive = false;
-  if (frameTimer) { clearInterval(frameTimer); frameTimer = null; }
+  frameLoading = false;
   document.getElementById("videoImg").style.display = "none";
   document.getElementById("placeholder").style.display = "flex";
   document.getElementById("statusTag").textContent = "状态: 已停止";

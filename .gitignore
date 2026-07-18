@@ -30,3 +30,4 @@ web/output/
 web/cache/
 scan_api_dump.txt
 scan_xdis.py
+debug.log

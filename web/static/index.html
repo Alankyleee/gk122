@@ -230,6 +230,7 @@ let streamActive = false;
 let scanTimer = null;
 let papersFrontPath = "";
 let papersBackPath = "";
+let availableDevices = [];
 
 async function api(path, data) {
   const res = await fetch(API + path, {
@@ -246,16 +247,21 @@ async function loadDevices() {
     const d = await api("/api/devices");
     const sel = document.getElementById("deviceSelect");
     sel.innerHTML = "";
-    let gk122Index = -1;
+    availableDevices = d.devices;
+    let gk122Device = null;
     d.devices.forEach(dev => {
       const o = document.createElement("option");
       o.value = dev.index;
+      o.dataset.backend = dev.backend;
       let label = dev.name;
-      if (dev.is_gk122) {
-        label = "🎯 GK122 高拍仪 " + label;
-        gk122Index = dev.index;
+      if (dev.is_virtual) {
+        label = "⛔ " + label + " (虚拟摄像头)";
+        o.disabled = true;
+      } else if (dev.is_gk122) {
+        label = "🎯 " + label + " (GK122 候选)";
+        if (!gk122Device || dev.score > gk122Device.score) gk122Device = dev;
       } else {
-        label = "❌ " + label + " (非高拍仪)";
+        label = "📷 " + label;
       }
       if (dev.max_width && dev.max_height) {
         label += ` [${dev.max_width}×${dev.max_height}]`;
@@ -263,46 +269,67 @@ async function loadDevices() {
       o.textContent = label;
       sel.appendChild(o);
     });
-    if (gk122Index >= 0) {
-      sel.value = gk122Index;
-      setStatus(`检测到 GK122 高拍仪 (索引 ${gk122Index}), 已自动选中`, "success");
+    if (gk122Device) {
+      selectDevice(gk122Device);
+      setStatus(`检测到 ${gk122Device.name}，已自动选中`, "success");
+    } else if (!d.name_detection_available) {
+      setStatus("无法读取设备名称，请先执行 pip install -r requirements.txt", "error");
     } else {
-      setStatus(`未检测到 GK122! 请确认设备已连接`, "error");
+      setStatus("未检测到可读取的 GK122，请确认驱动及 USB 连接", "error");
     }
   } catch(e) { setStatus("连接后端失败: " + e.message, "error"); }
 }
 
-// 一键启动 GK122
-async function quickStartGK122() {
-  document.getElementById("deviceSelect").value = "2";
-  document.getElementById("resolutionSelect").value = "4608x3456";
-  await startCamera();
+function selectDevice(device) {
+  const sel = document.getElementById("deviceSelect");
+  const option = Array.from(sel.options).find(o =>
+    Number(o.value) === device.index && Number(o.dataset.backend) === device.backend);
+  if (option) option.selected = true;
 }
 
-async function startCamera() {
-  const idx = parseInt(document.getElementById("deviceSelect").value);
+// 一键启动 GK122
+async function quickStartGK122() {
+  document.getElementById("resolutionSelect").value = "4608x3456";
+  await startCamera(true);
+}
+
+async function startCamera(autoSelect = false) {
+  const selectedOption = document.getElementById("deviceSelect").selectedOptions[0];
+  const idx = selectedOption ? parseInt(selectedOption.value) : 0;
+  const backend = selectedOption ? parseInt(selectedOption.dataset.backend) : undefined;
   const [w, h] = document.getElementById("resolutionSelect").value.split("x").map(Number);
   try {
-    const r = await api("/api/start", {index: idx, width: w, height: h});
+    streamActive = false;
+    setStatus("正在连接并等待首帧...");
+    const r = await api("/api/start", {index: idx, backend, width: w, height: h, auto_select: autoSelect});
     if (r.success) {
+      if (r.device) selectDevice(r.device);
       document.getElementById("resTag").textContent = `分辨率: ${r.width}×${r.height}`;
-      document.getElementById("statusTag").textContent = "状态: 已连接";
+      document.getElementById("statusTag").textContent = "状态: 等待画面";
       document.getElementById("placeholder").style.display = "none";
       const img = document.getElementById("videoImg");
       img.style.display = "block";
       streamActive = true;
-      startFramePulling();
-      setStatus(`摄像头已开启 (${r.width}×${r.height})`, "success");
+      startFramePulling(() => {
+        document.getElementById("statusTag").textContent = "状态: 已连接";
+        setStatus(`${r.device?.name || "GK122"} 已显示画面 (${r.width}×${r.height})`, "success");
+      });
       startPolling();
     }
-  } catch(e) { setStatus("开启失败: " + e.message, "error"); }
+  } catch(e) {
+    document.getElementById("videoImg").style.display = "none";
+    document.getElementById("placeholder").style.display = "flex";
+    document.getElementById("statusTag").textContent = "状态: 连接失败";
+    setStatus("开启失败: " + e.message, "error");
+  }
 }
 
 // 使用 onload 顺序拉取单帧(避免高分辨率帧被中断)
 let frameLoading = false;
-function startFramePulling() {
+function startFramePulling(onFirstFrame) {
   const img = document.getElementById("videoImg");
   frameLoading = false;
+  let firstFrame = true;
   img.onerror = function() {
     frameLoading = false;
     if (streamActive) setTimeout(pullFrame, 200);
@@ -316,6 +343,10 @@ function pullFrame() {
   frameLoading = true;
   img.onload = function() {
     frameLoading = false;
+    if (firstFrame) {
+      firstFrame = false;
+      if (onFirstFrame) onFirstFrame();
+    }
     if (streamActive) {
       // 自动适配拉取间隔: 高分辨率慢一些,低分辨率快一些
       var delay = (img.naturalWidth > 3000) ? 200 : 80;
@@ -529,6 +560,12 @@ function startPolling() {
     if (!streamActive) return;
     try {
       const r = await api("/api/status");
+      if (!r.running || !r.is_opened) {
+        streamActive = false;
+        document.getElementById("statusTag").textContent = "状态: 画面中断";
+        setStatus("摄像头已停止输出视频帧，请重新连接", "error");
+        return;
+      }
       if (r.scanning) {
         document.getElementById("scanCountTag").textContent = `已扫描: ${r.scan_count}`;
       }

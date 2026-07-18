@@ -11,6 +11,16 @@ from datetime import datetime
 from flask import Flask, jsonify, request, Response, send_from_directory, send_file
 from flask_cors import CORS
 from pathlib import Path
+from camera_selection import (
+    is_gk122_camera_name,
+    is_virtual_camera_name,
+    select_gk122_device,
+)
+
+try:
+    from cv2_enumerate_cameras import enumerate_cameras
+except ImportError:
+    enumerate_cameras = None
 
 BASE_DIR = Path(__file__).parent
 CAPTURE_YAML = BASE_DIR / "capture.yaml"
@@ -32,6 +42,9 @@ frame_count = 0
 is_running = False
 capture_thread = None
 device_index = 0
+device_backend = None
+device_name = ""
+device_catalog = []
 config = None
 
 scan_state = {
@@ -87,37 +100,101 @@ def load_config():
         }
 
 
-def list_devices():
-    """枚举视频设备。自动检测支持高分辨率的 GK122 设备。"""
-    devices = []
-    for i in range(10):
-        cap = cv2.VideoCapture(i, cv2.CAP_DSHOW)
+def open_camera(index, backend=None):
+    """按枚举结果打开设备，旧版数字索引则兼容 MSMF/DirectShow 回退。"""
+    if backend is not None:
+        return cv2.VideoCapture(int(index), int(backend))
+    cap = cv2.VideoCapture(int(index), cv2.CAP_DSHOW)
+    if not cap.isOpened():
+        cap.release()
+        cap = cv2.VideoCapture(int(index), cv2.CAP_MSMF)
+    return cap
+
+
+def enumerate_device_entries():
+    """获取与 OpenCV 索引一一对应的真实设备名称。"""
+    if enumerate_cameras is not None:
+        try:
+            cameras = list(enumerate_cameras(cv2.CAP_DSHOW))
+            if cameras:
+                return [{
+                    "index": int(camera.index),
+                    "backend": int(camera.backend),
+                    "name": camera.name or f"摄像头 ({camera.index})",
+                    "vid": getattr(camera, "vid", None),
+                    "pid": getattr(camera, "pid", None),
+                    "path": getattr(camera, "path", None),
+                    "name_detection": True,
+                } for camera in cameras]
+        except Exception as exc:
+            app.logger.warning("DirectShow 设备名称枚举失败: %s", exc)
+
+    # 缺少名称枚举依赖时保留旧版行为，但不再把索引写死为 GK122。
+    return [{
+        "index": i, "backend": int(cv2.CAP_DSHOW), "name": f"摄像头 ({i})",
+        "vid": None, "pid": None, "path": None, "name_detection": False,
+    } for i in range(10)]
+
+
+def probe_device(entry):
+    name = entry["name"]
+    virtual = is_virtual_camera_name(name)
+    result = dict(entry)
+    result.update({
+        "readable": False, "is_virtual": virtual, "is_gk122": False,
+        "max_width": 0, "max_height": 0, "score": -100 if virtual else 0,
+    })
+
+    cap = open_camera(entry["index"], entry.get("backend"))
+    try:
         if not cap.isOpened():
-            cap = cv2.VideoCapture(i, cv2.CAP_MSMF)
-        if cap.isOpened():
+            return result
+
+        # 虚拟摄像头不参与高拍仪能力探测，避免 OBS 接受任意分辨率后被误判。
+        resolutions = [(1280, 720)] if virtual else [
+            (4608, 3456), (4328, 3246), (4032, 3024), (3668, 2751),
+            (3264, 2448), (2592, 1944), (2048, 1536), (1920, 1080), (1280, 720),
+        ]
+        cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
+        max_w = max_h = 0
+        for width, height in resolutions:
+            cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
+            cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
             ret, frame = cap.read()
-            if ret:
-                for w, h in [(4608,3456),(4328,3246),(4032,3024),(3668,2751),(3264,2448),(2592,1944),(2048,1536),(1920,1080),(1280,720)]:
-                    cap.set(cv2.CAP_PROP_FRAME_WIDTH, w)
-                    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, h)
-                    actual_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-                    actual_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-                    if actual_w == w and actual_h == h:
-                        break
-                supports_high_res = actual_w >= 3264 and actual_h >= 2448
-                if supports_high_res:
-                    name = f"GK122 高拍仪 ({i})"
-                else:
-                    name = f"摄像头 ({i})"
-                devices.append({
-                    "index": i,
-                    "name": name,
-                    "readable": ret,
-                    "is_gk122": supports_high_res,
-                    "max_width": actual_w,
-                    "max_height": actual_h,
-                })
-            cap.release()
+            if ret and frame is not None:
+                actual_h, actual_w = frame.shape[:2]
+                result["readable"] = True
+                if actual_w * actual_h > max_w * max_h:
+                    max_w, max_h = actual_w, actual_h
+                if actual_w >= 3264 and actual_h >= 2448:
+                    break
+
+        result["max_width"] = max_w
+        result["max_height"] = max_h
+        named_gk122 = is_gk122_camera_name(name)
+        supports_high_res = max_w >= 3264 and max_h >= 2448
+        result["is_gk122"] = bool(not virtual and result["readable"] and (named_gk122 or supports_high_res))
+        result["score"] = (-100 if virtual else 0) + (100 if named_gk122 else 0) + (40 if supports_high_res else 0)
+        return result
+    finally:
+        cap.release()
+
+
+def list_devices():
+    """枚举设备，使用真实名称排除 OBS 等虚拟摄像头。"""
+    global device_catalog
+    devices = []
+    entries = enumerate_device_entries()
+    name_detection_available = any(item["name_detection"] for item in entries)
+    for entry in entries:
+        result = probe_device(entry)
+        # 回退探测会生成 10 个占位索引，只返回实际可读取的设备。
+        if result["readable"]:
+            devices.append(result)
+    devices.sort(key=lambda item: item["score"], reverse=True)
+    for item in devices:
+        item["name_detection_available"] = name_detection_available
+    device_catalog = devices
     return devices
 
 
@@ -144,6 +221,29 @@ def apply_settings(cap, settings=None):
     return True
 
 
+def read_first_frame(cap, requested_width, requested_height):
+    """协商可用分辨率并读取首帧，避免驱动不接受单一分辨率时黑屏。"""
+    configured = config.get("resolution", {}).get("doc_scan", [])
+    candidates = [(requested_width, requested_height)]
+    candidates.extend((int(width), int(height)) for width, height in configured)
+    candidates.extend([
+        tuple(config["recommend_resolution"]), tuple(config["backup_resolution"]), (1920, 1080), (1280, 720),
+    ])
+
+    seen = set()
+    for width, height in candidates:
+        if (width, height) in seen:
+            continue
+        seen.add((width, height))
+        apply_settings(cap, {"width": width, "height": height})
+        # 部分 UVC 驱动在切换分辨率后第一帧为空，允许少量预热帧。
+        for _ in range(3):
+            ret, frame = cap.read()
+            if ret and frame is not None and frame.size:
+                return frame
+    return None
+
+
 def capture_loop():
     global current_frame, current_frame_jpeg, frame_count, is_running
     error_count = 0
@@ -166,6 +266,7 @@ def capture_loop():
         if ret_jpg:
             current_frame_jpeg = buf.tobytes()
         time.sleep(0.02)
+    is_running = False
 
 
 def get_output_filename(fmt="jpg", prefix="IMG_", suffix="index"):
@@ -251,7 +352,11 @@ def index():
 @app.route("/api/devices")
 def api_devices():
     devices = list_devices()
-    return jsonify({"devices": devices, "count": len(devices)})
+    return jsonify({
+        "devices": devices,
+        "count": len(devices),
+        "name_detection_available": bool(devices and devices[0]["name_detection_available"]),
+    })
 
 
 @app.route("/api/config")
@@ -261,39 +366,102 @@ def api_config():
 
 @app.route("/api/start", methods=["POST"])
 def api_start():
-    global video_capture, is_running, capture_thread, device_index
+    global video_capture, is_running, capture_thread, device_index, device_backend, device_name
+    global current_frame, current_frame_jpeg, frame_count
     data = request.json or {}
-    device_index = int(data.get("index", 0))
     width = int(data.get("width", config["recommend_resolution"][0]))
     height = int(data.get("height", config["recommend_resolution"][1]))
+
+    devices = device_catalog
+    if not devices:
+        devices = list_devices()
+
+    selected = None
+    if data.get("auto_select"):
+        if devices and not devices[0].get("name_detection_available"):
+            return jsonify({
+                "success": False,
+                "message": "无法安全识别 GK122，请先执行 pip install -r requirements.txt 后重启服务。",
+            }), 409
+        selected = select_gk122_device(devices)
+        if not selected:
+            return jsonify({
+                "success": False,
+                "message": "未找到可读取的 GK122。请安装设备驱动，并确认未被其他程序占用。",
+            }), 404
+    else:
+        requested_index = int(data.get("index", 0))
+        requested_backend = data.get("backend")
+        if requested_backend is not None:
+            requested_backend = int(requested_backend)
+        selected = next((item for item in devices
+                         if item["index"] == requested_index
+                         and (requested_backend is None or item["backend"] == requested_backend)), None)
+        if selected and selected["is_virtual"] and not data.get("allow_virtual"):
+            return jsonify({"success": False, "message": f"{selected['name']} 是虚拟摄像头，请选择 GK122。"}), 400
+        if selected is None:
+            selected = {"index": requested_index, "backend": requested_backend, "name": f"摄像头 ({requested_index})"}
+
+    device_index = int(selected["index"])
+    device_backend = selected.get("backend")
+    device_name = selected["name"]
+
+    # 彻底停掉旧读取线程，防止切换设备时线程继续读取已释放的句柄。
+    is_running = False
+    if capture_thread and capture_thread.is_alive():
+        capture_thread.join(timeout=1.0)
     with capture_lock:
         if video_capture and video_capture.isOpened():
             video_capture.release()
             video_capture = None
-        video_capture = cv2.VideoCapture(device_index, cv2.CAP_MSMF)
+        current_frame = None
+        current_frame_jpeg = None
+        frame_count = 0
+        video_capture = open_camera(device_index, device_backend)
         if not video_capture.isOpened():
-            video_capture = cv2.VideoCapture(device_index, cv2.CAP_DSHOW)
-        if not video_capture.isOpened():
-            return jsonify({"success": False, "message": "无法打开摄像头"}), 400
-        apply_settings(video_capture, {"width": width, "height": height})
-        actual_w = int(video_capture.get(cv2.CAP_PROP_FRAME_WIDTH))
-        actual_h = int(video_capture.get(cv2.CAP_PROP_FRAME_HEIGHT))
+            video_capture.release()
+            video_capture = None
+            return jsonify({"success": False, "message": f"无法打开摄像头: {device_name}"}), 400
+        # VideoCapture.isOpened() 只表示句柄打开；必须拿到真实首帧才算连接成功。
+        first_frame = read_first_frame(video_capture, width, height)
+        if first_frame is None:
+            video_capture.release()
+            video_capture = None
+            return jsonify({
+                "success": False,
+                "message": f"{device_name} 已打开但没有视频帧，请关闭占用摄像头的软件后重试。",
+            }), 400
+        current_frame = first_frame
+        actual_h, actual_w = first_frame.shape[:2]
+        ret_jpg, buf = cv2.imencode(".jpg", first_frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
+        if not ret_jpg:
+            video_capture.release()
+            video_capture = None
+            current_frame = None
+            return jsonify({"success": False, "message": "首帧读取成功，但 JPEG 编码失败。"}), 500
+        current_frame_jpeg = buf.tobytes()
+        frame_count = 1
         is_running = True
-        if not capture_thread or not capture_thread.is_alive():
-            capture_thread = threading.Thread(target=capture_loop, daemon=True)
-            capture_thread.start()
-    return jsonify({"success": True, "width": actual_w, "height": actual_h})
+        capture_thread = threading.Thread(target=capture_loop, daemon=True)
+        capture_thread.start()
+    return jsonify({
+        "success": True, "width": actual_w, "height": actual_h,
+        "device": {"index": device_index, "backend": device_backend, "name": device_name},
+    })
 
 
 @app.route("/api/stop", methods=["POST"])
 def api_stop():
-    global is_running, video_capture
+    global is_running, video_capture, current_frame, current_frame_jpeg
     is_running = False
-    time.sleep(0.2)
+    if capture_thread and capture_thread.is_alive():
+        capture_thread.join(timeout=1.0)
     with capture_lock:
         if video_capture:
             video_capture.release()
             video_capture = None
+        current_frame = None
+        current_frame_jpeg = None
     return jsonify({"success": True})
 
 
@@ -308,6 +476,7 @@ def api_status():
     return jsonify({
         "is_opened": bool(opened), "width": w, "height": h,
         "frame_count": frame_count, "running": is_running,
+        "device": {"index": device_index, "backend": device_backend, "name": device_name},
         "scanning": scan_state["is_scanning"], "scan_count": scan_state["scan_count"],
     })
 

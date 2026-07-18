@@ -221,24 +221,39 @@ function setStatus(msg, type) {
 
 async function initDevices() {
   try {
-    await navigator.mediaDevices.getUserMedia({ video: true });
+    // 先短暂申请权限以读取设备名称，随后立即释放，避免占用 GK122。
+    const permissionStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+    permissionStream.getTracks().forEach(track => track.stop());
     const devices = await navigator.mediaDevices.enumerateDevices();
     const videoDevices = devices.filter(d => d.kind === 'videoinput');
     const sel = document.getElementById("deviceSelect");
     sel.innerHTML = "";
+    let preferredOption = null;
     videoDevices.forEach((dev, idx) => {
       const o = document.createElement("option");
       o.value = dev.deviceId;
       let label = dev.label || `摄像头 ${idx + 1}`;
-      if (dev.label && (dev.label.includes('GK122') || dev.label.includes('高拍仪') || 
-          dev.label.includes('Document') || dev.label.includes('Scanner'))) {
+      const normalized = label.toLowerCase();
+      const isVirtual = ['obs', 'virtual', 'manycam', 'xsplit', 'ndi', 'vcam']
+        .some(keyword => normalized.includes(keyword));
+      const isScanner = ['gk122', '高拍仪', '得力', 'deli', 'document', 'scanner']
+        .some(keyword => normalized.includes(keyword));
+      if (isVirtual) {
+        label = "⛔ " + label + " (虚拟摄像头)";
+        o.disabled = true;
+      } else if (isScanner) {
         label = "⭐ " + label + " (高拍仪)";
-        o.selected = true;
+        preferredOption = o;
       }
       o.textContent = label;
       sel.appendChild(o);
     });
-    setStatus(`检测到 ${videoDevices.length} 个设备`, "success");
+    if (preferredOption) {
+      preferredOption.selected = true;
+      setStatus(`已自动选择 ${preferredOption.textContent}`, "success");
+    } else {
+      setStatus(`检测到 ${videoDevices.length} 个设备，请手动选择 GK122`, "success");
+    }
   } catch(e) { setStatus("获取设备失败: " + e.message, "error"); }
 }
 
@@ -258,18 +273,21 @@ async function startCamera() {
   };
   try {
     setStatus("正在连接摄像头...");
+    if (currentStream) {
+      currentStream.getTracks().forEach(track => track.stop());
+      currentStream = null;
+    }
     currentStream = await navigator.mediaDevices.getUserMedia(constraints);
     const video = document.getElementById("video");
     video.srcObject = currentStream;
+    await video.play();
     video.style.display = "block";
     document.getElementById("placeholder").style.display = "none";
-    video.onloadedmetadata = () => {
-      const actualW = video.videoWidth;
-      const actualH = video.videoHeight;
-      document.getElementById("resTag").textContent = `分辨率: ${actualW}×${actualH}`;
-      document.getElementById("statusTag").textContent = "状态: 已连接";
-      setStatus(`摄像头已开启 (${actualW}×${actualH})`, "success");
-    };
+    const actualW = video.videoWidth;
+    const actualH = video.videoHeight;
+    document.getElementById("resTag").textContent = `分辨率: ${actualW}×${actualH}`;
+    document.getElementById("statusTag").textContent = "状态: 已连接";
+    setStatus(`摄像头已开启 (${actualW}×${actualH})`, "success");
   } catch(e) { setStatus("开启失败: " + e.message, "error"); }
 }
 

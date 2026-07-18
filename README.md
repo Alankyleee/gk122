@@ -21,10 +21,21 @@ GK122 高拍仪前端调用代码，基于反编译得力高拍仪 v1.5.9 提取
 ### 方案二：Python 后端
 ```bash
 cd web
-pip install flask flask-cors opencv-python pyyaml
+pip install -r requirements.txt
 python server.py
 # 浏览器打开 http://localhost:5000
 ```
+
+`cv2-enumerate-cameras` 用来读取 Windows DirectShow 的真实设备名称。它可以让程序排除
+OBS Virtual Camera 等虚拟设备，并把 OpenCV 索引准确映射到 GK122。更新代码后请务必重新执行
+上述安装命令。
+
+## 摄像头选择与排障
+
+- “一键启动 GK122”不再使用固定设备索引，会按真实名称和实际视频分辨率自动选择。
+- 后端只有收到真实首帧后才会显示“已连接”；如果设备被微信、OBS、浏览器等程序占用，会直接返回错误。
+- 4608×3456 无法出帧时，程序会依次回退到设备配置中的推荐分辨率。
+- 如果设备列表仍无法显示真实名称，请确认在 `web` 目录执行过 `pip install -r requirements.txt`。
 
 ## API 接口
 

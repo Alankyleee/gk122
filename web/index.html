@@ -1,0 +1,586 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GK122 高拍仪 - 摄像头调用</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: "Microsoft YaHei", sans-serif;
+    background: #f3f5f9;
+    color: #222323;
+    padding: 20px;
+  }
+  .container { max-width: 1400px; margin: 0 auto; }
+  h1 {
+    font-size: 24px;
+    margin-bottom: 20px;
+    color: #222323;
+    font-weight: 600;
+  }
+  .main {
+    display: flex;
+    gap: 20px;
+    flex-wrap: wrap;
+  }
+  .video-panel {
+    flex: 1;
+    min-width: 640px;
+    background: #fff;
+    border-radius: 8px;
+    padding: 16px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+  }
+  .video-wrapper {
+    width: 100%;
+    background: #c6ccd8;
+    border-radius: 6px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 480px;
+    overflow: hidden;
+    position: relative;
+  }
+  #video {
+    max-width: 100%;
+    max-height: 720px;
+    display: block;
+  }
+  .video-placeholder {
+    color: #90969f;
+    font-size: 16px;
+    text-align: center;
+  }
+  .video-placeholder img { width: 80px; opacity: 0.5; margin-bottom: 12px; }
+  .control-panel {
+    width: 360px;
+    background: #fff;
+    border-radius: 8px;
+    padding: 16px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+  }
+  .panel-title {
+    font-size: 16px;
+    font-weight: 600;
+    margin-bottom: 16px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid #eee;
+  }
+  .form-group {
+    margin-bottom: 14px;
+  }
+  .form-group label {
+    display: block;
+    font-size: 13px;
+    color: #555;
+    margin-bottom: 6px;
+  }
+  .form-group select,
+  .form-group input[type=range] {
+    width: 100%;
+    padding: 6px 10px;
+    border: 1px solid #dcdfe6;
+    border-radius: 4px;
+    font-size: 14px;
+    background: #fff;
+  }
+  .form-group input[type=range] {
+    padding: 0;
+    height: 28px;
+  }
+  .value-display {
+    float: right;
+    color: #888;
+    font-size: 12px;
+  }
+  .btn {
+    display: inline-block;
+    padding: 10px 20px;
+    border: none;
+    border-radius: 4px;
+    font-size: 14px;
+    cursor: pointer;
+    transition: all 0.2s;
+    font-weight: 500;
+  }
+  .btn-primary {
+    background: #409eff;
+    color: #fff;
+  }
+  .btn-primary:hover { background: #337ecc; }
+  .btn-success {
+    background: #67c23a;
+    color: #fff;
+  }
+  .btn-success:hover { background: #529b2e; }
+  .btn-warning {
+    background: #e6a23c;
+    color: #fff;
+  }
+  .btn-warning:hover { background: #b88230; }
+  .btn-danger {
+    background: #f56c6c;
+    color: #fff;
+  }
+  .btn-danger:hover { background: #c45656; }
+  .btn-group {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+    margin-top: 8px;
+  }
+  .btn-block { width: 100%; }
+  .status-bar {
+    margin-top: 12px;
+    padding: 10px 14px;
+    background: #ecf5ff;
+    border: 1px solid #b3d8ff;
+    border-radius: 4px;
+    font-size: 13px;
+    color: #409eff;
+  }
+  .status-bar.error {
+    background: #fef0f0;
+    border-color: #fbc4c4;
+    color: #f56c6c;
+  }
+  .status-bar.success {
+    background: #f0f9eb;
+    border-color: #c2e7b0;
+    color: #67c23a;
+  }
+  .resolution-list {
+    font-size: 12px;
+    color: #999;
+    margin-top: 4px;
+  }
+  .canvas-area {
+    display: none;
+  }
+  .photo-list {
+    margin-top: 20px;
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+  .photo-item {
+    width: 120px;
+    cursor: pointer;
+    border: 2px solid transparent;
+    border-radius: 4px;
+    overflow: hidden;
+    transition: all 0.2s;
+  }
+  .photo-item:hover {
+    border-color: #409eff;
+    transform: scale(1.02);
+  }
+  .photo-item img {
+    width: 100%;
+    display: block;
+  }
+  .info-tag {
+    display: inline-block;
+    padding: 2px 8px;
+    background: #f0f0f0;
+    border-radius: 3px;
+    font-size: 12px;
+    color: #666;
+    margin-right: 6px;
+  }
+  .section-divider {
+    height: 1px;
+    background: #eee;
+    margin: 16px 0;
+  }
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>GK122 高拍仪 — Web 前端调用示例</h1>
+
+  <div class="main">
+    <div class="video-panel">
+      <div class="video-wrapper" id="videoWrapper">
+        <div class="video-placeholder" id="placeholder">
+          <div>📷</div>
+          <div style="margin-top:8px;">请选择设备并点击「开启摄像头」</div>
+        </div>
+        <video id="video" autoplay playsinline style="display:none;"></video>
+      </div>
+      <canvas id="canvas" class="canvas-area"></canvas>
+      <div style="margin-top:12px; display:flex; gap:10px;">
+        <button class="btn btn-success" onclick="capturePhoto()">📸 拍照</button>
+        <button class="btn btn-warning" onclick="downloadPhoto()">💾 下载当前帧</button>
+        <button class="btn btn-primary" onclick="fullscreenVideo()">⛶ 全屏预览</button>
+        <button class="btn btn-danger" onclick="stopCamera()">⏹ 停止</button>
+      </div>
+      <div style="margin-top:12px;">
+        <span class="info-tag" id="resTag">分辨率: -</span>
+        <span class="info-tag" id="fpsTag">帧率: -</span>
+        <span class="info-tag" id="deviceTag">设备: -</span>
+      </div>
+      <div class="photo-list" id="photoList"></div>
+    </div>
+
+    <div class="control-panel">
+      <div class="panel-title">设备设置</div>
+
+      <div class="form-group">
+        <label>摄像头设备</label>
+        <select id="deviceSelect" onchange="onDeviceChange()"></select>
+      </div>
+
+      <div class="form-group">
+        <label>分辨率</label>
+        <select id="resolutionSelect" onchange="changeResolution()">
+          <option value="4608x3456">4608 × 3456 (1600万像素)</option>
+          <option value="4328x3246">4328 × 3246 (1400万像素)</option>
+          <option value="4032x3024">4032 × 3024 (1200万像素)</option>
+          <option value="3668x2751">3668 × 2751 (1000万像素)</option>
+          <option value="3264x2448" selected>3264 × 2448 (800万像素 · 推荐)</option>
+          <option value="2592x1944">2592 × 1944 (500万像素)</option>
+          <option value="2048x1536">2048 × 1536 (300万像素)</option>
+          <option value="1920x1080">1920 × 1080 (200万像素)</option>
+          <option value="1600x1200">1600 × 1200 (192万像素)</option>
+        </select>
+        <div class="resolution-list">GK122 文档扫描分辨率</div>
+      </div>
+
+      <div class="form-group">
+        <label>帧率</label>
+        <select id="fpsSelect">
+          <option value="5">5 fps</option>
+          <option value="10" selected>10 fps</option>
+          <option value="15">15 fps</option>
+          <option value="20">20 fps</option>
+          <option value="30">30 fps</option>
+        </select>
+      </div>
+
+      <div class="btn-group">
+        <button class="btn btn-primary btn-block" onclick="startCamera()">▶ 开启摄像头</button>
+      </div>
+
+      <div class="section-divider"></div>
+      <div class="panel-title">图像调节</div>
+
+      <div class="form-group">
+        <label>亮度 <span class="value-display" id="brightnessVal">0</span></label>
+        <input type="range" id="brightness" min="-64" max="64" value="0" step="1" oninput="applyConstraints()">
+      </div>
+
+      <div class="form-group">
+        <label>对比度 <span class="value-display" id="contrastVal">32</span></label>
+        <input type="range" id="contrast" min="0" max="64" value="32" step="1" oninput="applyConstraints()">
+      </div>
+
+      <div class="form-group">
+        <label>锐度 <span class="value-display" id="sharpnessVal">2</span></label>
+        <input type="range" id="sharpness" min="1" max="7" value="2" step="1" oninput="applyConstraints()">
+      </div>
+
+      <div class="form-group">
+        <label>饱和度 <span class="value-display" id="saturationVal">64</span></label>
+        <input type="range" id="saturation" min="0" max="100" value="64" step="1" oninput="applyConstraints()">
+      </div>
+
+      <div class="btn-group">
+        <button class="btn btn-warning" onclick="resetImageSettings()">↺ 重置</button>
+      </div>
+
+      <div class="section-divider"></div>
+      <div class="panel-title">拍照设置</div>
+
+      <div class="form-group">
+        <label>输出格式</label>
+        <select id="formatSelect">
+          <option value="image/jpeg" selected>JPG</option>
+          <option value="image/png">PNG</option>
+          <option value="image/webp">WebP</option>
+        </select>
+      </div>
+
+      <div class="form-group">
+        <label>JPG 质量 <span class="value-display" id="qualityVal">0.92</span></label>
+        <input type="range" id="quality" min="0.5" max="1" value="0.92" step="0.01"
+               oninput="document.getElementById('qualityVal').textContent=this.value">
+      </div>
+
+      <div class="status-bar" id="statusBar">
+        就绪 · 请点击「开启摄像头」
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+let currentStream = null;
+let currentDeviceId = null;
+let photoCount = 0;
+let fpsCounter = 0;
+let lastFpsTime = Date.now();
+
+const GK122_RESOLUTIONS = [
+  { w: 4608, h: 3456, label: '1600万像素' },
+  { w: 4328, h: 3246, label: '1400万像素' },
+  { w: 4032, h: 3024, label: '1200万像素' },
+  { w: 3668, h: 2751, label: '1000万像素' },
+  { w: 3264, h: 2448, label: '800万像素' },
+  { w: 2592, h: 1944, label: '500万像素' },
+  { w: 2048, h: 1536, label: '300万像素' },
+  { w: 1920, h: 1080, label: '200万像素' },
+  { w: 1600, h: 1200, label: '192万像素' },
+];
+
+async function initDevices() {
+  try {
+    await navigator.mediaDevices.getUserMedia({ video: true });
+    const devices = await navigator.mediaDevices.enumerateDevices();
+    const videoDevices = devices.filter(d => d.kind === 'videoinput');
+
+    const select = document.getElementById('deviceSelect');
+    select.innerHTML = '';
+
+    videoDevices.forEach((dev, idx) => {
+      const opt = document.createElement('option');
+      opt.value = dev.deviceId;
+      opt.textContent = dev.label || `摄像头 ${idx + 1}`;
+      if (dev.label.toLowerCase().includes('gk122') ||
+          dev.label.toLowerCase().includes('document') ||
+          dev.label.toLowerCase().includes('scanner') ||
+          dev.label.toLowerCase().includes('高拍仪')) {
+        opt.textContent += '  ✓ 检测到高拍仪';
+        opt.selected = true;
+      }
+      select.appendChild(opt);
+    });
+
+    setStatus(`检测到 ${videoDevices.length} 个视频设备`, 'success');
+  } catch (err) {
+    setStatus('获取设备列表失败: ' + err.message, 'error');
+  }
+}
+
+function onDeviceChange() {
+  if (currentStream) {
+    stopCamera();
+  }
+}
+
+async function startCamera() {
+  const deviceId = document.getElementById('deviceSelect').value;
+  const [w, h] = document.getElementById('resolutionSelect').value.split('x').map(Number);
+  const fps = parseInt(document.getElementById('fpsSelect').value);
+
+  const constraints = {
+    video: {
+      deviceId: deviceId ? { exact: deviceId } : undefined,
+      width: { ideal: w },
+      height: { ideal: h },
+      frameRate: { ideal: fps },
+      brightness: { ideal: parseInt(document.getElementById('brightness').value) },
+      contrast: { ideal: parseInt(document.getElementById('contrast').value) },
+      sharpness: { ideal: parseInt(document.getElementById('sharpness').value) },
+      saturation: { ideal: parseInt(document.getElementById('saturation').value) },
+    },
+    audio: false
+  };
+
+  try {
+    setStatus('正在连接摄像头...');
+    currentStream = await navigator.mediaDevices.getUserMedia(constraints);
+    const video = document.getElementById('video');
+    video.srcObject = currentStream;
+    video.style.display = 'block';
+    document.getElementById('placeholder').style.display = 'none';
+
+    video.onloadedmetadata = () => {
+      const actualW = video.videoWidth;
+      const actualH = video.videoHeight;
+      document.getElementById('resTag').textContent = `分辨率: ${actualW} × ${actualH}`;
+      setStatus(`摄像头已开启 (${actualW}×${actualH})`, 'success');
+
+      const track = currentStream.getVideoTracks()[0];
+      const label = track.label || '未知设备';
+      document.getElementById('deviceTag').textContent = `设备: ${label}`;
+
+      const settings = track.getSettings();
+      if (settings.brightness !== undefined) updateSlider('brightness', settings.brightness);
+      if (settings.contrast !== undefined) updateSlider('contrast', settings.contrast);
+      if (settings.sharpness !== undefined) updateSlider('sharpness', settings.sharpness);
+      if (settings.saturation !== undefined) updateSlider('saturation', settings.saturation);
+
+      startFpsCounter();
+    };
+
+  } catch (err) {
+    setStatus('开启失败: ' + err.message, 'error');
+    console.error(err);
+  }
+}
+
+function stopCamera() {
+  if (currentStream) {
+    currentStream.getTracks().forEach(t => t.stop());
+    currentStream = null;
+  }
+  const video = document.getElementById('video');
+  video.srcObject = null;
+  video.style.display = 'none';
+  document.getElementById('placeholder').style.display = 'block';
+  document.getElementById('resTag').textContent = '分辨率: -';
+  document.getElementById('fpsTag').textContent = '帧率: -';
+  document.getElementById('deviceTag').textContent = '设备: -';
+  setStatus('摄像头已停止');
+}
+
+async function changeResolution() {
+  if (!currentStream) return;
+  const [w, h] = document.getElementById('resolutionSelect').value.split('x').map(Number);
+  const fps = parseInt(document.getElementById('fpsSelect').value);
+  const track = currentStream.getVideoTracks()[0];
+  try {
+    await track.applyConstraints({
+      width: { ideal: w },
+      height: { ideal: h },
+      frameRate: { ideal: fps }
+    });
+    const video = document.getElementById('video');
+    setTimeout(() => {
+      document.getElementById('resTag').textContent = `分辨率: ${video.videoWidth} × ${video.videoHeight}`;
+      setStatus(`已切换到 ${video.videoWidth}×${video.videoHeight}`, 'success');
+    }, 500);
+  } catch (err) {
+    setStatus('切换分辨率失败: ' + err.message, 'error');
+  }
+}
+
+async function applyConstraints() {
+  document.getElementById('brightnessVal').textContent = document.getElementById('brightness').value;
+  document.getElementById('contrastVal').textContent = document.getElementById('contrast').value;
+  document.getElementById('sharpnessVal').textContent = document.getElementById('sharpness').value;
+  document.getElementById('saturationVal').textContent = document.getElementById('saturation').value;
+
+  if (!currentStream) return;
+  const track = currentStream.getVideoTracks()[0];
+  try {
+    await track.applyConstraints({
+      brightness: parseInt(document.getElementById('brightness').value),
+      contrast: parseInt(document.getElementById('contrast').value),
+      sharpness: parseInt(document.getElementById('sharpness').value),
+      saturation: parseInt(document.getElementById('saturation').value),
+    });
+  } catch (err) {
+    console.warn('应用参数失败:', err);
+  }
+}
+
+function updateSlider(id, val) {
+  document.getElementById(id).value = val;
+  document.getElementById(id + 'Val').textContent = val;
+}
+
+function resetImageSettings() {
+  document.getElementById('brightness').value = 0;
+  document.getElementById('contrast').value = 32;
+  document.getElementById('sharpness').value = 2;
+  document.getElementById('saturation').value = 64;
+  applyConstraints();
+  setStatus('图像参数已重置');
+}
+
+function capturePhoto() {
+  if (!currentStream) {
+    setStatus('请先开启摄像头', 'error');
+    return;
+  }
+  const video = document.getElementById('video');
+  const canvas = document.getElementById('canvas');
+  canvas.width = video.videoWidth;
+  canvas.height = video.videoHeight;
+  const ctx = canvas.getContext('2d');
+  ctx.drawImage(video, 0, 0);
+
+  const format = document.getElementById('formatSelect').value;
+  const quality = parseFloat(document.getElementById('quality').value);
+  const dataUrl = canvas.toDataURL(format, quality);
+
+  photoCount++;
+  const list = document.getElementById('photoList');
+  const item = document.createElement('div');
+  item.className = 'photo-item';
+  item.innerHTML = `<img src="${dataUrl}" alt="photo ${photoCount}">`;
+  item.onclick = () => {
+    const a = document.createElement('a');
+    a.href = dataUrl;
+    a.download = `GK122_${photoCount}_${video.videoWidth}x${video.videoHeight}.${format.split('/')[1]}`;
+    a.click();
+  };
+  list.insertBefore(item, list.firstChild);
+
+  setStatus(`已拍照 (${video.videoWidth}×${video.videoHeight}), 点击缩略图下载`, 'success');
+}
+
+function downloadPhoto() {
+  if (!currentStream) {
+    setStatus('请先开启摄像头', 'error');
+    return;
+  }
+  const video = document.getElementById('video');
+  const canvas = document.getElementById('canvas');
+  canvas.width = video.videoWidth;
+  canvas.height = video.videoHeight;
+  const ctx = canvas.getContext('2d');
+  ctx.drawImage(video, 0, 0);
+
+  const format = document.getElementById('formatSelect').value;
+  const quality = parseFloat(document.getElementById('quality').value);
+  const dataUrl = canvas.toDataURL(format, quality);
+  const a = document.createElement('a');
+  a.href = dataUrl;
+  a.download = `GK122_${Date.now()}_${video.videoWidth}x${video.videoHeight}.${format.split('/')[1]}`;
+  a.click();
+  setStatus('图片已下载', 'success');
+}
+
+function fullscreenVideo() {
+  const video = document.getElementById('video');
+  if (video.requestFullscreen) {
+    video.requestFullscreen();
+  } else if (video.webkitRequestFullscreen) {
+    video.webkitRequestFullscreen();
+  }
+}
+
+function startFpsCounter() {
+  const video = document.getElementById('video');
+  const updateFps = () => {
+    if (!currentStream) return;
+    fpsCounter++;
+    const now = Date.now();
+    if (now - lastFpsTime >= 1000) {
+      document.getElementById('fpsTag').textContent = `帧率: ${fpsCounter} fps`;
+      fpsCounter = 0;
+      lastFpsTime = now;
+    }
+    requestAnimationFrame(updateFps);
+  };
+  requestAnimationFrame(updateFps);
+}
+
+function setStatus(msg, type) {
+  const bar = document.getElementById('statusBar');
+  bar.textContent = msg;
+  bar.className = 'status-bar' + (type ? ' ' + type : '');
+}
+
+window.addEventListener('load', initDevices);
+window.addEventListener('beforeunload', () => {
+  if (currentStream) currentStream.getTracks().forEach(t => t.stop());
+});
+</script>
+</body>
+</html>

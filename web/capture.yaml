@@ -1,0 +1,23 @@
+GK122:
+  recommend_resolution: [3264, 2448]
+  backup_resolution: [2048, 1536]
+  recommend_fourcc: MJPG
+  recommend_light: 0
+  recommend_contrast: 32
+  recommend_sharpen: 2
+  resolution:
+    doc_scan:
+      - [4608, 3456]
+      - [4328, 3246]
+      - [4032, 3024]
+      - [3668, 2751]
+      - [3264, 2448]
+      - [2592, 1944]
+      - [2048, 1536]
+      - [1920, 1080]
+      - [1600, 1200]
+    video_recording:
+      - [2048, 1536]
+      - [1600, 1200]
+      - [1920, 1080]
+      - [1280, 720]

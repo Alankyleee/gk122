@@ -1,0 +1,327 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GK122 高拍仪 - 后端 API 调用</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: "Microsoft YaHei", sans-serif;
+    background: #f3f5f9;
+    color: #222323;
+    padding: 20px;
+  }
+  .container { max-width: 1400px; margin: 0 auto; }
+  h1 { font-size: 24px; margin-bottom: 20px; font-weight: 600; }
+  .main { display: flex; gap: 20px; flex-wrap: wrap; }
+  .video-panel {
+    flex: 1; min-width: 640px; background: #fff; border-radius: 8px;
+    padding: 16px; box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+  }
+  .video-wrapper {
+    width: 100%; background: #c6ccd8; border-radius: 6px;
+    display: flex; align-items: center; justify-content: center;
+    min-height: 480px; overflow: hidden;
+  }
+  #videoImg { max-width: 100%; max-height: 720px; display: none; }
+  .placeholder { color: #90969f; font-size: 16px; text-align: center; }
+  .control-panel {
+    width: 380px; background: #fff; border-radius: 8px;
+    padding: 16px; box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+  }
+  .panel-title {
+    font-size: 16px; font-weight: 600; margin-bottom: 16px;
+    padding-bottom: 10px; border-bottom: 1px solid #eee;
+  }
+  .form-group { margin-bottom: 14px; }
+  .form-group label { display: block; font-size: 13px; color: #555; margin-bottom: 6px; }
+  .form-group select, .form-group input[type=range] {
+    width: 100%; padding: 6px 10px; border: 1px solid #dcdfe6;
+    border-radius: 4px; font-size: 14px; background: #fff;
+  }
+  .form-group input[type=range] { padding: 0; height: 28px; }
+  .value-display { float: right; color: #888; font-size: 12px; }
+  .btn {
+    display: inline-block; padding: 10px 20px; border: none; border-radius: 4px;
+    font-size: 14px; cursor: pointer; transition: all 0.2s; font-weight: 500;
+  }
+  .btn-primary { background: #409eff; color: #fff; }
+  .btn-primary:hover { background: #337ecc; }
+  .btn-success { background: #67c23a; color: #fff; }
+  .btn-success:hover { background: #529b2e; }
+  .btn-warning { background: #e6a23c; color: #fff; }
+  .btn-warning:hover { background: #b88230; }
+  .btn-danger { background: #f56c6c; color: #fff; }
+  .btn-danger:hover { background: #c45656; }
+  .btn-group { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 8px; }
+  .btn-block { width: 100%; }
+  .status-bar {
+    margin-top: 12px; padding: 10px 14px; background: #ecf5ff;
+    border: 1px solid #b3d8ff; border-radius: 4px; font-size: 13px; color: #409eff;
+  }
+  .status-bar.error { background: #fef0f0; border-color: #fbc4c4; color: #f56c6c; }
+  .status-bar.success { background: #f0f9eb; border-color: #c2e7b0; color: #67c23a; }
+  .info-tag {
+    display: inline-block; padding: 2px 8px; background: #f0f0f0;
+    border-radius: 3px; font-size: 12px; color: #666; margin-right: 6px;
+  }
+  .section-divider { height: 1px; background: #eee; margin: 16px 0; }
+  .api-list { font-size: 12px; color: #666; background: #f8f9fa; padding: 10px; border-radius: 4px; }
+  .api-list code { background: #fff; padding: 2px 6px; border-radius: 3px; color: #409eff; }
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>GK122 高拍仪 — Python OpenCV 后端调用</h1>
+
+  <div class="main">
+    <div class="video-panel">
+      <div class="video-wrapper">
+        <div class="placeholder" id="placeholder">📷<div style="margin-top:8px;">请选择设备并点击「开启摄像头」</div></div>
+        <img id="videoImg" alt="video stream">
+      </div>
+      <div style="margin-top:12px; display:flex; gap:10px; flex-wrap:wrap;">
+        <button class="btn btn-success" onclick="capturePhoto()">📸 拍照下载</button>
+        <button class="btn btn-warning" onclick="rotate90()">↻ 旋转90°</button>
+        <button class="btn btn-primary" onclick="fullscreen()">⛶ 全屏</button>
+        <button class="btn btn-danger" onclick="stopCamera()">⏹ 停止</button>
+      </div>
+      <div style="margin-top:12px;">
+        <span class="info-tag" id="resTag">分辨率: -</span>
+        <span class="info-tag" id="statusTag">状态: 未连接</span>
+        <span class="info-tag" id="fpsTag">帧: -</span>
+      </div>
+    </div>
+
+    <div class="control-panel">
+      <div class="panel-title">设备设置</div>
+
+      <div class="form-group">
+        <label>摄像头设备</label>
+        <select id="deviceSelect"></select>
+      </div>
+
+      <div class="form-group">
+        <label>分辨率</label>
+        <select id="resolutionSelect">
+          <option value="4608x3456">4608 × 3456 (1600万像素)</option>
+          <option value="4328x3246">4328 × 3246 (1400万像素)</option>
+          <option value="4032x3024">4032 × 3024 (1200万像素)</option>
+          <option value="3668x2751">3668 × 2751 (1000万像素)</option>
+          <option value="3264x2448" selected>3264 × 2448 (800万像素 · 推荐)</option>
+          <option value="2592x1944">2592 × 1944 (500万像素)</option>
+          <option value="2048x1536">2048 × 1536 (300万像素)</option>
+          <option value="1920x1080">1920 × 1080 (200万像素)</option>
+          <option value="1600x1200">1600 × 1200 (192万像素)</option>
+        </select>
+      </div>
+
+      <div class="btn-group">
+        <button class="btn btn-primary btn-block" onclick="startCamera()">▶ 开启摄像头</button>
+      </div>
+
+      <div class="section-divider"></div>
+      <div class="panel-title">图像调节</div>
+
+      <div class="form-group">
+        <label>亮度 <span class="value-display" id="brightnessVal">0</span></label>
+        <input type="range" id="brightness" min="-64" max="64" value="0" oninput="document.getElementById('brightnessVal').textContent=this.value">
+      </div>
+
+      <div class="form-group">
+        <label>对比度 <span class="value-display" id="contrastVal">32</span></label>
+        <input type="range" id="contrast" min="0" max="64" value="32" oninput="document.getElementById('contrastVal').textContent=this.value">
+      </div>
+
+      <div class="form-group">
+        <label>锐度 <span class="value-display" id="sharpnessVal">2</span></label>
+        <input type="range" id="sharpness" min="1" max="7" value="2" oninput="document.getElementById('sharpnessVal').textContent=this.value">
+      </div>
+
+      <div class="form-group">
+        <label>饱和度 <span class="value-display" id="saturationVal">64</span></label>
+        <input type="range" id="saturation" min="0" max="100" value="64" oninput="document.getElementById('saturationVal').textContent=this.value">
+      </div>
+
+      <div class="btn-group">
+        <button class="btn btn-warning" onclick="applySettings()">✔ 应用设置</button>
+        <button class="btn btn-primary" onclick="resetSettings()">↺ 重置</button>
+      </div>
+
+      <div class="section-divider"></div>
+      <div class="panel-title">API 接口</div>
+      <div class="api-list">
+        <div><code>GET /api/devices</code> 设备列表</div>
+        <div><code>POST /api/start</code> 开启摄像头</div>
+        <div><code>POST /api/stop</code> 停止摄像头</div>
+        <div><code>GET /api/status</code> 状态查询</div>
+        <div><code>GET /api/stream</code> MJPEG 视频流</div>
+        <div><code>GET /api/frame</code> 单帧 JPEG</div>
+        <div><code>GET /api/frame_base64</code> 单帧 Base64</div>
+        <div><code>POST /api/capture</code> 拍照下载</div>
+        <div><code>POST /api/settings</code> 设置参数</div>
+        <div><code>POST /api/rotate</code> 旋转画面</div>
+      </div>
+
+      <div class="status-bar" id="statusBar">就绪</div>
+    </div>
+  </div>
+</div>
+
+<script>
+const API_BASE = "";
+let streamActive = false;
+let statusTimer = null;
+let frameCount = 0;
+
+async function apiGet(path) {
+  const res = await fetch(API_BASE + path);
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
+async function apiPost(path, data) {
+  const res = await fetch(API_BASE + path, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data || {}),
+  });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
+async function loadDevices() {
+  try {
+    const data = await apiGet("/api/devices");
+    const sel = document.getElementById("deviceSelect");
+    sel.innerHTML = "";
+    data.devices.forEach(d => {
+      const opt = document.createElement("option");
+      opt.value = d.index;
+      opt.textContent = d.name + ` (索引 ${d.index})`;
+      sel.appendChild(opt);
+    });
+    setStatus(`检测到 ${data.count} 个视频设备`, "success");
+  } catch (e) {
+    setStatus("连接后端失败: " + e.message, "error");
+  }
+}
+
+async function startCamera() {
+  const index = parseInt(document.getElementById("deviceSelect").value);
+  const [w, h] = document.getElementById("resolutionSelect").value.split("x").map(Number);
+  try {
+    setStatus("正在开启摄像头...");
+    const res = await apiPost("/api/start", { index, width: w, height: h });
+    if (res.success) {
+      document.getElementById("resTag").textContent = `分辨率: ${res.width} × ${res.height}`;
+      document.getElementById("statusTag").textContent = "状态: 已连接";
+      document.getElementById("placeholder").style.display = "none";
+      const img = document.getElementById("videoImg");
+      img.style.display = "block";
+      img.src = API_BASE + "/api/stream?_t=" + Date.now();
+      streamActive = true;
+      startStatusPolling();
+      setStatus(`摄像头已开启 (${res.width}×${res.height})`, "success");
+    }
+  } catch (e) {
+    setStatus("开启失败: " + e.message, "error");
+  }
+}
+
+async function stopCamera() {
+  try {
+    await apiPost("/api/stop");
+    streamActive = false;
+    if (statusTimer) { clearInterval(statusTimer); statusTimer = null; }
+    const img = document.getElementById("videoImg");
+    img.src = "";
+    img.style.display = "none";
+    document.getElementById("placeholder").style.display = "flex";
+    document.getElementById("statusTag").textContent = "状态: 已停止";
+    setStatus("摄像头已停止");
+  } catch (e) {
+    setStatus("停止失败: " + e.message, "error");
+  }
+}
+
+async function applySettings() {
+  const [w, h] = document.getElementById("resolutionSelect").value.split("x").map(Number);
+  const data = {
+    width: w,
+    height: h,
+    brightness: parseInt(document.getElementById("brightness").value),
+    contrast: parseInt(document.getElementById("contrast").value),
+    sharpness: parseInt(document.getElementById("sharpness").value),
+    saturation: parseInt(document.getElementById("saturation").value),
+  };
+  try {
+    const res = await apiPost("/api/settings", data);
+    if (res.success) {
+      setStatus(`设置已应用 (${res.width}×${res.height})`, "success");
+    }
+  } catch (e) {
+    setStatus("应用设置失败: " + e.message, "error");
+  }
+}
+
+function resetSettings() {
+  document.getElementById("brightness").value = 0;
+  document.getElementById("contrast").value = 32;
+  document.getElementById("sharpness").value = 2;
+  document.getElementById("saturation").value = 64;
+  document.getElementById("brightnessVal").textContent = "0";
+  document.getElementById("contrastVal").textContent = "32";
+  document.getElementById("sharpnessVal").textContent = "2";
+  document.getElementById("saturationVal").textContent = "64";
+  applySettings();
+}
+
+function capturePhoto() {
+  const quality = 95;
+  const fmt = "jpg";
+  const form = document.createElement("form");
+  form.method = "POST";
+  form.action = API_BASE + "/api/capture";
+  form.enctype = "application/json";
+  form.target = "_blank";
+  window.open(API_BASE + "/api/frame?_t=" + Date.now(), "_blank");
+}
+
+async function rotate90() {
+  try {
+    await apiPost("/api/rotate", { angle: 90 });
+    setStatus("画面已旋转 90°", "success");
+  } catch (e) {
+    setStatus("旋转失败: " + e.message, "error");
+  }
+}
+
+function fullscreen() {
+  const img = document.getElementById("videoImg");
+  if (img.requestFullscreen) img.requestFullscreen();
+  else if (img.webkitRequestFullscreen) img.webkitRequestFullscreen();
+}
+
+function startStatusPolling() {
+  if (statusTimer) clearInterval(statusTimer);
+  statusTimer = setInterval(async () => {
+    if (!streamActive) return;
+    try {
+      const res = await apiGet("/api/status");
+      document.getElementById("fpsTag").textContent = `帧: ${res.frame_count}`;
+    } catch (e) {}
+  }, 1000);
+}
+
+function setStatus(msg, type) {
+  const bar = document.getElementById("statusBar");
+  bar.textContent = msg;
+  bar.className = "status-bar" + (type ? " " + type : "");
+}
+
+window.addEventListener("load", loadDevices);
+</script>
+</body>
+</html>

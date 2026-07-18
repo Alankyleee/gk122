@@ -85,11 +85,15 @@ h1{font-size:22px;margin-bottom:16px;font-weight:600}
     <div class="form-row"><label>摄像头</label><select id="deviceSelect"></select></div>
     <div class="form-row"><label>分辨率</label>
       <select id="resolutionSelect">
-        <option value="4608x3456">4608×3456</option>
-        <option value="3264x2448" selected>3264×2448 (推荐)</option>
-        <option value="2048x1536">2048×1536</option>
-        <option value="1920x1080">1920×1080</option>
-        <option value="1280x720">1280×720</option>
+        <option value="4608x3456">4608×3456 (1600万)</option>
+        <option value="4328x3246">4328×3246 (1400万)</option>
+        <option value="4032x3024">4032×3024 (1200万)</option>
+        <option value="3668x2751">3668×2751 (1000万)</option>
+        <option value="3264x2448" selected>3264×2448 (800万 · 推荐)</option>
+        <option value="2592x1944">2592×1944 (500万)</option>
+        <option value="2048x1536">2048×1536 (300万)</option>
+        <option value="1920x1080">1920×1080 (200万)</option>
+        <option value="1600x1200">1600×1200 (192万)</option>
       </select>
     </div>
     <div class="form-row"><label>亮度 <span class="val" id="briVal">0</span></label>
@@ -238,12 +242,27 @@ async function loadDevices() {
     const d = await api("/api/devices");
     const sel = document.getElementById("deviceSelect");
     sel.innerHTML = "";
+    let gk122Index = -1;
     d.devices.forEach(dev => {
       const o = document.createElement("option");
-      o.value = dev.index; o.textContent = dev.name + ` (${dev.index})`;
+      o.value = dev.index;
+      let label = dev.name;
+      if (dev.is_gk122) {
+        label = "⭐ " + label;
+        gk122Index = dev.index;
+      }
+      if (dev.max_width && dev.max_height) {
+        label += ` (最大 ${dev.max_width}×${dev.max_height})`;
+      }
+      o.textContent = label;
       sel.appendChild(o);
     });
-    setStatus(`检测到 ${d.devices.length} 个设备`, "success");
+    if (gk122Index >= 0) {
+      sel.value = gk122Index;
+      setStatus(`检测到 GK122 高拍仪 (索引 ${gk122Index}), 已自动选中`, "success");
+    } else {
+      setStatus(`检测到 ${d.devices.length} 个设备`, "success");
+    }
   } catch(e) { setStatus("连接后端失败: " + e.message, "error"); }
 }
 

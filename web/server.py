@@ -88,18 +88,35 @@ def load_config():
 
 
 def list_devices():
-    """枚举视频设备。使用 MSMF 后端(OpenCV 5.0 推荐),回退 DSHOW。"""
+    """枚举视频设备。自动检测支持高分辨率的 GK122 设备。"""
     devices = []
     for i in range(10):
-        cap = cv2.VideoCapture(i, cv2.CAP_MSMF)
-        opened = cap.isOpened()
-        if not opened:
-            cap = cv2.VideoCapture(i, cv2.CAP_DSHOW)
-            opened = cap.isOpened()
-        if opened:
-            ret, _ = cap.read()
-            name = f"视频设备 {i}" if ret else f"摄像头 {i}"
-            devices.append({"index": i, "name": name, "readable": ret})
+        cap = cv2.VideoCapture(i, cv2.CAP_DSHOW)
+        if not cap.isOpened():
+            cap = cv2.VideoCapture(i, cv2.CAP_MSMF)
+        if cap.isOpened():
+            ret, frame = cap.read()
+            if ret:
+                for w, h in [(4608,3456),(4328,3246),(4032,3024),(3668,2751),(3264,2448),(2592,1944),(2048,1536),(1920,1080),(1280,720)]:
+                    cap.set(cv2.CAP_PROP_FRAME_WIDTH, w)
+                    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, h)
+                    actual_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+                    actual_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+                    if actual_w == w and actual_h == h:
+                        break
+                supports_high_res = actual_w >= 3264 and actual_h >= 2448
+                if supports_high_res:
+                    name = f"GK122 高拍仪 ({i})"
+                else:
+                    name = f"摄像头 ({i})"
+                devices.append({
+                    "index": i,
+                    "name": name,
+                    "readable": ret,
+                    "is_gk122": supports_high_res,
+                    "max_width": actual_w,
+                    "max_height": actual_h,
+                })
             cap.release()
     return devices
 

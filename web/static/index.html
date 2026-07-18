@@ -65,6 +65,7 @@ h1{font-size:22px;margin-bottom:16px;font-weight:600}
   </div>
   <div class="toolbar">
     <button class="btn btn-primary" onclick="startCamera()">▶ 开启</button>
+    <button class="btn btn-success" onclick="quickStartGK122()" style="background:#e040fb">🎯 一键启动 GK122 (1600万)</button>
     <button class="btn btn-danger" onclick="stopCamera()">⏹ 停止</button>
     <button class="btn btn-success" onclick="scanOne()">📸 扫描</button>
     <button class="btn btn-warning" onclick="rotate90()">↻ 旋转</button>
@@ -83,6 +84,9 @@ h1{font-size:22px;margin-bottom:16px;font-weight:600}
   <div class="card">
     <div class="card-title">设备设置</div>
     <div class="form-row"><label>摄像头</label><select id="deviceSelect"></select></div>
+    <div style="font-size:11px;color:#e040fb;margin-bottom:10px;background:#faf0ff;padding:6px;border-radius:4px">
+      ⚠️ 请选择带 <b>🎯 GK122 高拍仪</b> 标记的设备，不要选 OBS 虚拟摄像头
+    </div>
     <div class="form-row"><label>分辨率</label>
       <select id="resolutionSelect">
         <option value="4608x3456">4608×3456 (1600万)</option>
@@ -248,11 +252,13 @@ async function loadDevices() {
       o.value = dev.index;
       let label = dev.name;
       if (dev.is_gk122) {
-        label = "⭐ " + label;
+        label = "🎯 GK122 高拍仪 " + label;
         gk122Index = dev.index;
+      } else {
+        label = "❌ " + label + " (非高拍仪)";
       }
       if (dev.max_width && dev.max_height) {
-        label += ` (最大 ${dev.max_width}×${dev.max_height})`;
+        label += ` [${dev.max_width}×${dev.max_height}]`;
       }
       o.textContent = label;
       sel.appendChild(o);
@@ -261,9 +267,16 @@ async function loadDevices() {
       sel.value = gk122Index;
       setStatus(`检测到 GK122 高拍仪 (索引 ${gk122Index}), 已自动选中`, "success");
     } else {
-      setStatus(`检测到 ${d.devices.length} 个设备`, "success");
+      setStatus(`未检测到 GK122! 请确认设备已连接`, "error");
     }
   } catch(e) { setStatus("连接后端失败: " + e.message, "error"); }
+}
+
+// 一键启动 GK122
+async function quickStartGK122() {
+  document.getElementById("deviceSelect").value = "2";
+  document.getElementById("resolutionSelect").value = "4608x3456";
+  await startCamera();
 }
 
 async function startCamera() {

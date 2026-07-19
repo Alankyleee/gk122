@@ -1,6 +1,7 @@
 import unittest
 
 from camera_selection import (
+    gk122_model_from_name,
     is_gk122_camera_name,
     is_virtual_camera_name,
     select_gk122_device,
@@ -15,8 +16,11 @@ class CameraSelectionTests(unittest.TestCase):
 
     def test_gk122_names_are_recognized(self):
         self.assertTrue(is_gk122_camera_name("GK122 USB Camera"))
+        self.assertEqual(gk122_model_from_name("GK122 (14351)"), "GK122")
+        self.assertEqual(gk122_model_from_name("GK122a (firmware)"), "GK122a")
         self.assertTrue(is_gk122_camera_name("得力高拍仪"))
         self.assertFalse(is_gk122_camera_name("Integrated Webcam"))
+        self.assertFalse(is_gk122_camera_name("Document Scanner"))
 
     def test_auto_selection_never_returns_virtual_camera(self):
         devices = [

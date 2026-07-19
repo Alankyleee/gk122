@@ -64,7 +64,7 @@ h1{font-size:22px;margin-bottom:16px;font-weight:600}
     <img id="videoImg" alt="stream">
   </div>
   <div class="toolbar">
-    <button class="btn btn-primary" onclick="startCamera()">▶ 开启</button>
+    <button class="btn btn-primary" onclick="startCamera(true)">▶ 开启 GK122</button>
     <button class="btn btn-success" onclick="quickStartGK122()" style="background:#e040fb">🎯 一键启动 GK122 (1600万)</button>
     <button class="btn btn-danger" onclick="stopCamera()">⏹ 停止</button>
     <button class="btn btn-success" onclick="scanOne()">📸 扫描</button>
@@ -326,38 +326,40 @@ async function startCamera(autoSelect = false) {
 
 // 使用 onload 顺序拉取单帧(避免高分辨率帧被中断)
 let frameLoading = false;
+let framePullGeneration = 0;
 function startFramePulling(onFirstFrame) {
   const img = document.getElementById("videoImg");
+  const generation = ++framePullGeneration;
   frameLoading = false;
   let firstFrame = true;
-  img.onerror = function() {
-    frameLoading = false;
-    if (streamActive) setTimeout(pullFrame, 200);
-  };
+  function pullFrame() {
+    if (!streamActive || generation !== framePullGeneration) return;
+    frameLoading = true;
+    img.onload = function() {
+      frameLoading = false;
+      if (firstFrame) {
+        firstFrame = false;
+        if (onFirstFrame) onFirstFrame();
+      }
+      if (streamActive && generation === framePullGeneration) {
+        // 自动适配拉取间隔: 高分辨率慢一些,低分辨率快一些
+        const delay = (img.naturalWidth > 3000) ? 200 : 80;
+        setTimeout(pullFrame, delay);
+      }
+    };
+    img.onerror = function() {
+      frameLoading = false;
+      if (streamActive && generation === framePullGeneration) setTimeout(pullFrame, 200);
+    };
+    img.src = API + "/api/frame?_t=" + Date.now();
+  }
   pullFrame();
-}
-function pullFrame() {
-  if (!streamActive) return;
-  const img = document.getElementById("videoImg");
-  img.src = API + "/api/frame?_t=" + Date.now();
-  frameLoading = true;
-  img.onload = function() {
-    frameLoading = false;
-    if (firstFrame) {
-      firstFrame = false;
-      if (onFirstFrame) onFirstFrame();
-    }
-    if (streamActive) {
-      // 自动适配拉取间隔: 高分辨率慢一些,低分辨率快一些
-      var delay = (img.naturalWidth > 3000) ? 200 : 80;
-      setTimeout(pullFrame, delay);
-    }
-  };
 }
 
 async function stopCamera() {
   try { await api("/api/stop"); } catch(e) {}
   streamActive = false;
+  framePullGeneration++;
   frameLoading = false;
   document.getElementById("videoImg").style.display = "none";
   document.getElementById("placeholder").style.display = "flex";

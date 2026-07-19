@@ -21,3 +21,34 @@ GK122:
       - [1600, 1200]
       - [1920, 1080]
       - [1280, 720]
+
+GK122a:
+  recommend_resolution: [3264, 2448]
+  backup_resolution: [2048, 1536]
+  recommend_fourcc: MJPG
+  recommend_light: 10
+  min_light: -128
+  max_light: 127
+  recommend_contrast: 32
+  min_contrast: 0
+  max_contrast: 63
+  recommend_sharpen: 10
+  min_sharpen: 0
+  max_sharpen: 31
+  denoise: 45
+  resolution:
+    doc_scan:
+      - [4608, 3456]
+      - [4328, 3246]
+      - [4032, 3024]
+      - [3668, 2751]
+      - [3264, 2448]
+      - [2592, 1944]
+      - [2048, 1536]
+      - [1920, 1080]
+      - [1600, 1200]
+    video_recording:
+      - [2048, 1536]
+      - [1600, 1200]
+      - [1920, 1080]
+      - [1280, 720]
